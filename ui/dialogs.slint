@@ -1,0 +1,93 @@
+// The Roots dialog: the folders VibeRepos looks in, each with Remove, and Add folder… (the
+// system's folder picker). Closing it rescans when something changed (Rust decides).
+
+import { Theme, Type, Icons, Button, ButtonKind, IconButton, Dialog } from "@vibeware";
+import { RootItem } from "types.slint";
+
+export component RootsDialog {
+    in property <[RootItem]> roots;
+    in property <bool> top: true;
+    callback add();
+    callback remove(int);
+    callback closed();
+
+    Dialog {
+        width: root.width;
+        height: root.height;
+        title: "Roots";
+        dialog-width: 560px;
+        top: root.top;
+        cancelled => { root.closed(); }
+        accepted => { root.closed(); }
+        Text {
+            text: "VibeRepos looks for repos in these folders, up to 8 levels down. It skips node_modules, .venv, build output and links (junctions, symbolic links).";
+            wrap: word-wrap;
+            font-size: Type.small;
+            color: Theme.ink-2;
+            min-height: self.preferred-height;
+        }
+        VerticalLayout {
+            spacing: 4px;
+            for r[i] in root.roots: Rectangle {
+                height: 30px;
+                accessible-role: list-item;
+                accessible-label: r.path;
+                accessible-description: r.note;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: r.path;
+                        font-family: Type.mono;
+                        font-size: Type.small;
+                        color: Theme.ink;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        min-width: 0px;
+                        horizontal-stretch: 1;
+                        accessible-role: none;
+                    }
+                    if r.note != "": Text {
+                        text: r.note;
+                        font-size: Type.small;
+                        color: Theme.ink-3;
+                        vertical-alignment: center;
+                        accessible-role: none;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            icon: Icons.x;
+                            label: "Remove " + r.path;
+                            tooltip: "Stop looking in this folder";
+                            inert: !root.top;
+                            clicked => { root.remove(i); }
+                        }
+                    }
+                }
+            }
+            if root.roots.length == 0: Text {
+                text: "No folders yet.";
+                font-size: Type.small;
+                color: Theme.ink-3;
+                height: 30px;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Button {
+                text: "Add folder…";
+                icon: Icons.folder-plus;
+                inert: !root.top;
+                clicked => { root.add(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: "Close";
+                kind: ButtonKind.primary;
+                inert: !root.top;
+                clicked => { root.closed(); }
+            }
+        }
+    }
+}

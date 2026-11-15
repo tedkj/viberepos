@@ -1,0 +1,186 @@
+// The detail panel for the selected repo: its name, the actions (Open folder, Open terminal,
+// Copy path, Fetch, and Copy the command when git refuses the repo), then every line Rust made:
+// paths, branch and upstream, every local branch, every remote (no credentials), the last fetch
+// and commit, worktrees, submodules, warnings and git's own words. One accessibility node per
+// line; long values wrap.
+
+import { Theme, Type, Icons, Button, ButtonKind, IconButton, SectionLabel } from "@vibeware";
+import { DetailLine } from "types.slint";
+import { Tag } from "repos.slint";
+import { AppIcons } from "app-icons.slint";
+import { ScrollView } from "std-widgets.slint";
+
+component LineView inherits Rectangle {
+    in property <DetailLine> l;
+    in property <length> key-width: 92px;
+    accessible-role: list-item;
+    accessible-label: root.l.key;
+    accessible-description: root.l.value;
+    min-height: lay.preferred-height;
+    lay := HorizontalLayout {
+        spacing: 8px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        if root.l.key != "": Text {
+            width: root.key-width;
+            text: root.l.key;
+            font-family: Type.mono;
+            font-size: Type.small;
+            color: Theme.ink-3;
+            overflow: elide;
+            accessible-role: none;
+        }
+        Text {
+            text: root.l.value;
+            font-family: root.l.mono ? Type.mono : Type.ui;
+            font-size: Type.small;
+            color: root.l.warn ? Theme.warn-text : Theme.ink-2;
+            wrap: word-wrap;
+            min-width: 0px;
+            min-height: self.preferred-height;
+            horizontal-stretch: 1;
+            accessible-role: none;
+        }
+    }
+}
+
+export component DetailPanel inherits Rectangle {
+    in property <string> title;
+    in property <string> tag;
+    in property <[DetailLine]> lines;
+    in property <bool> can-fetch;
+    in property <string> fetch-tip;
+    in property <string> command;
+    // Beside the table (a line on its left) or under it (a line on top).
+    in property <bool> side;
+    in property <bool> inert;
+    callback open-folder();
+    callback open-terminal();
+    callback copy-path() -> bool;
+    callback fetch();
+    callback copy-command() -> bool;
+
+    background: Theme.bg;
+    accessible-role: groupbox;
+    accessible-label: "Repo";
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: root.side ? 1px : root.width;
+        height: root.side ? root.height : 1px;
+        background: Theme.line;
+    }
+
+    property <bool> path-copied;
+    property <bool> command-copied;
+    settle := Timer {
+        interval: 1500ms;
+        running: false;
+        triggered => {
+            root.path-copied = false;
+            root.command-copied = false;
+            self.running = false;
+        }
+    }
+
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 10px;
+        padding-top: 12px;
+        padding-bottom: 8px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.title;
+                font-size: Type.body;
+                font-weight: Type.strong;
+                color: Theme.ink;
+                vertical-alignment: center;
+                overflow: elide;
+                min-width: 40px;
+                horizontal-stretch: 1;
+            }
+            if root.tag != "": VerticalLayout {
+                alignment: center;
+                Tag { text: root.tag; }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Button {
+                text: "Open folder";
+                icon: Icons.folder-open;
+                tooltip: "Open the repo's folder in Explorer (Enter)";
+                inert: root.inert;
+                clicked => { root.open-folder(); }
+            }
+            Button {
+                text: "Terminal";
+                label: "Open terminal";
+                icon: Icons.terminal;
+                tooltip: "A terminal in the repo's folder";
+                inert: root.inert;
+                clicked => { root.open-terminal(); }
+            }
+            Button {
+                text: "Fetch";
+                icon: AppIcons.fetch;
+                tooltip: root.fetch-tip;
+                enabled: root.can-fetch;
+                inert: root.inert;
+                clicked => { root.fetch(); }
+            }
+            IconButton {
+                label: root.path-copied ? "Copied" : "Copy path";
+                icon: root.path-copied ? Icons.check : Icons.copy;
+                tooltip: "Copy the repo's full path";
+                inert: root.inert;
+                enter-presses: false;
+                clicked => {
+                    if (root.copy-path()) {
+                        root.path-copied = true;
+                        settle.running = true;
+                        settle.restart();
+                    }
+                }
+            }
+        }
+        if root.command != "": HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Button {
+                text: root.command-copied ? "Copied" : "Copy the command";
+                icon: root.command-copied ? Icons.check : Icons.copy;
+                tooltip: root.command;
+                inert: root.inert;
+                enter-presses: false;
+                clicked => {
+                    if (root.copy-command()) {
+                        root.command-copied = true;
+                        settle.running = true;
+                        settle.restart();
+                    }
+                }
+            }
+        }
+        sv := ScrollView {
+            vertical-stretch: 1;
+            // The content is as wide as the panel: long values wrap instead of widening it.
+            content-width: self.visible-width;
+            content-height: content.preferred-height;
+            content := VerticalLayout {
+                width: sv.visible-width;
+                spacing: 0px;
+                padding-right: 8px;
+                for l in root.lines: VerticalLayout {
+                    padding-top: l.section ? 8px : 0px;
+                    if l.section: SectionLabel { text: l.key; }
+                    if !l.section: LineView { l: l; }
+                }
+            }
+        }
+    }
+}

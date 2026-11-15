@@ -1,0 +1,291 @@
+// The top bar: Refresh, Fetch all (Stop while it runs), Roots…, the Portable chip, Copy all,
+// Save CSV, theme and About; under it the filter chips with their counts and the name field.
+// It draws; Rust decides.
+
+import { Theme, Type, Icons, Button, ButtonKind, IconButton, Chamfer, TipArea, Field } from "@vibeware";
+import { Brand } from "brand.slint";
+import { AppIcons } from "app-icons.slint";
+import { ChipItem } from "types.slint";
+
+// "Portable": the copy runs from a stick, settings beside the exe (VibePrint's).
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <string> tooltip;
+    height: 22px;
+    width: lay.preferred-width;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+    accessible-description: root.tooltip;
+    Chamfer {
+        width: 100%;
+        height: 100%;
+        stroke: Theme.line-strong;
+        cut: 5px;
+    }
+    lay := HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        Text {
+            text: root.text;
+            font-family: Type.mono;
+            font-size: Type.small;
+            color: Theme.ink-2;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+    TipArea { tooltip: root.tooltip; }
+}
+
+export component TopBar inherits Rectangle {
+    in property <bool> scanning;
+    in property <bool> fetching;
+    in property <bool> stopping;
+    in property <bool> can-fetch;
+    in property <bool> portable;
+    in property <string> portable-tip;
+    in property <bool> has-rows;
+    in property <bool> inert;
+
+    callback refresh();
+    callback fetch-all();
+    callback stop-fetch();
+    callback roots();
+    callback copy-all() -> bool;
+    callback save-csv();
+    callback toggle-theme();
+    callback about();
+
+    height: 48px;
+    background: Theme.bg;
+
+    // Copy's moment of "copied" (the check), as VibeWare's CopyButton shows it.
+    property <bool> copied;
+    settle := Timer {
+        interval: 1500ms;
+        running: false;
+        triggered => {
+            root.copied = false;
+            self.running = false;
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 10px;
+        spacing: 8px;
+        Brand { horizontal-stretch: 0; }
+        Rectangle { width: 6px; }
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: Icons.refresh;
+                label: "Refresh";
+                tooltip: "Look for repos again and read every one (F5)";
+                enabled: !root.scanning && !root.fetching;
+                inert: root.inert;
+                clicked => { root.refresh(); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: root.stopping ? "Stopping…" : root.fetching ? "Stop" : "Fetch all";
+                icon: root.fetching ? Icons.stop : AppIcons.fetch;
+                kind: root.fetching ? ButtonKind.secondary : ButtonKind.primary;
+                // The read-only note was About's: a fetch is the one thing that changes a repo.
+                tooltip: root.fetching ? "Start no more fetches; the running ones finish" : "git fetch every repo that has a remote (refs only: nothing is pulled or merged). Fetching is the only change VibeRepos makes to a repo; everything else just reads";
+                enabled: root.fetching ? !root.stopping : root.can-fetch;
+                inert: root.inert;
+                clicked => {
+                    if (root.fetching) {
+                        root.stop-fetch();
+                    } else {
+                        root.fetch-all();
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: "Roots…";
+                icon: AppIcons.roots;
+                kind: ButtonKind.ghost;
+                tooltip: "The folders VibeRepos looks in";
+                inert: root.inert;
+                clicked => { root.roots(); }
+            }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        if root.portable: VerticalLayout {
+            alignment: center;
+            Badge { text: "Portable"; tooltip: root.portable-tip; }
+        }
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: root.copied ? Icons.check : Icons.copy;
+                label: root.copied ? "Copied" : "Copy all";
+                tooltip: "Copy the rows shown as text";
+                enabled: root.has-rows;
+                inert: root.inert;
+                enter-presses: false;
+                clicked => {
+                    if (root.copy-all()) {
+                        root.copied = true;
+                        settle.running = true;
+                        settle.restart();
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: AppIcons.save;
+                label: "Save CSV";
+                tooltip: "Save the rows shown as CSV…";
+                enabled: root.has-rows;
+                inert: root.inert;
+                clicked => { root.save-csv(); }
+            }
+        }
+        Rectangle {
+            width: 1px;
+            background: Theme.line;
+        }
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: Icons.theme;
+                label: "Theme";
+                tooltip: Theme.dark ? "Light theme" : "Dark theme";
+                inert: root.inert;
+                clicked => { root.toggle-theme(); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: Icons.info;
+                label: "About";
+                tooltip: "About VibeRepos";
+                inert: root.inert;
+                clicked => { root.about(); }
+            }
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
+}
+
+// A filter chip: its word and its count; Enter or Space on it, or a click, turns it on.
+component Chip inherits Rectangle {
+    in property <ChipItem> c;
+    in property <bool> inert;
+    callback picked();
+    height: 24px;
+    width: lay.preferred-width;
+    accessible-role: button;
+    accessible-label: root.c.label;
+    accessible-description: root.c.count + " repos";
+    accessible-checked: root.c.active;
+    accessible-action-default => { root.picked(); }
+    forward-focus: fs;
+    fs := FocusScope {
+        focus-on-tab-navigation: !root.inert;
+        focus-on-click: false;
+        key-pressed(e) => {
+            if (e.text == Key.Return || e.text == " ") {
+                root.picked();
+                return accept;
+            }
+            reject
+        }
+    }
+    Chamfer {
+        width: 100%;
+        height: 100%;
+        cut: 5px;
+        fill: root.c.active ? Theme.accent-soft : ta.has-hover ? Theme.surface-3 : transparent;
+        stroke: fs.has-focus ? Theme.focus : root.c.active ? Theme.accent : Theme.line-strong;
+    }
+    lay := HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 9px;
+        spacing: 6px;
+        Text {
+            text: root.c.label;
+            font-size: Type.small;
+            font-weight: root.c.active ? Type.strong : Type.regular;
+            color: root.c.active ? Theme.accent : Theme.ink-2;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+        Text {
+            text: root.c.count;
+            font-family: Type.mono;
+            font-size: Type.small;
+            color: root.c.active ? Theme.accent : Theme.ink-3;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.picked(); }
+    }
+}
+
+export component FilterBar inherits Rectangle {
+    in property <[ChipItem]> chips;
+    in-out property <string> name-text;
+    in property <bool> inert;
+    callback chip-picked(int);
+    callback name-edited(string);
+    callback name-escaped() -> bool;
+
+    public function focus-name() {
+        name.focus-input();
+    }
+
+    height: 40px;
+    background: Theme.bg;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 10px;
+        spacing: 6px;
+        for c[i] in root.chips: VerticalLayout {
+            alignment: center;
+            Chip {
+                c: c;
+                inert: root.inert;
+                picked => { root.chip-picked(i); }
+            }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        VerticalLayout {
+            alignment: center;
+            name := Field {
+                width: 240px;
+                horizontal-stretch: 0;
+                label: "Name";
+                a11y-name: "Filter by name";
+                placeholder: "part of a repo's name";
+                text <=> root.name-text;
+                inert: root.inert;
+                edited(t) => { root.name-edited(t); }
+                escaped => { root.name-escaped() }
+            }
+        }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
+}

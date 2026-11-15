@@ -1,0 +1,50 @@
+// The rows and records Rust hands the window. Every string is formatted in Rust; the .slint
+// files only lay them out.
+// Row states: 0 reading (or fetching), 1 clean and in sync, 2 work of its own (dirty, unpushed,
+// behind), 3 needs a look (an operation half done, conflicts, upstream gone), 4 error.
+
+export struct RepoRow {
+    id: int,             // the row's index in Rust's list: what a click selects
+    state: int,
+    repo: string,
+    tag: string,         // "worktree of X", "submodule of X", "bare", "nested in X"
+    path-tip: string,    // the path under its root
+    op: string,          // "REBASING", "MERGING", ... or ""
+    branch: string,
+    changes: string,
+    conflicts: bool,
+    sync: string,
+    sync-tip: string,
+    stash: string,
+    remote: string,
+    hint: string,        // always "" since copy-ux M9 (no visibility word)
+    last: string,
+    last-tip: string,
+    fetched: string,
+    error: string,       // the first stderr line, cleaned ("" for none)
+    fetch: string,       // "queued", "fetching…", "fetched", "fetch failed: ...", ""
+    selected: bool,
+    a11y: string,        // what a screen reader says about the row
+}
+
+// A filter chip: its word, its count, whether it is the one on.
+export struct ChipItem {
+    label: string,
+    count: string,
+    active: bool,
+}
+
+// One line of the detail panel: a section title (`section`), or a key and its value.
+export struct DetailLine {
+    key: string,
+    value: string,
+    mono: bool,
+    section: bool,
+    warn: bool,
+}
+
+// A root in the Roots dialog.
+export struct RootItem {
+    path: string,
+    note: string,        // "" or "not found", "on this stick (follows its letter)"
+}

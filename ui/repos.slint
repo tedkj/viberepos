@@ -1,0 +1,406 @@
+// The repo table: one row per repo the walk found, its state dot, the name with its tag, the
+// branch (an operation half done as a warn chip before it), changes, sync, stashes, the remote
+// (its host), the last commit and the last fetch. An error takes the place of
+// the columns it leaves unknown. One accessibility node per row (VIBEWARE.md): the texts inside
+// are not nodes.
+
+import { ListView } from "std-widgets.slint";
+import { Theme, Type, Icons, Icon, Chamfer, TipArea, Button, ButtonKind } from "@vibeware";
+import { RepoRow } from "types.slint";
+
+// Column widths, shared by the head and the rows.
+export global Cols {
+    out property <length> dot: 8px;
+    out property <length> repo-min: 130px;
+    out property <length> branch: 140px;
+    out property <length> changes: 140px;
+    out property <length> sync: 100px;
+    out property <length> stash: 50px;
+    out property <length> remote: 150px;
+    out property <length> time: 88px;
+    out property <length> spacing: 8px;
+}
+
+// The row's colour: clean and in sync green, own work quiet, a look needed amber, an error red,
+// reading the accent.
+export global States {
+    public pure function color(s: int) -> color {
+        return s == 1 ? Theme.ok : s == 3 ? Theme.warn : s == 4 ? Theme.danger : s == 0 ? Theme.accent : Theme.ink-2;
+    }
+    public pure function filled(s: int) -> bool {
+        return s != 0;
+    }
+}
+
+// The state dot: an octagon (VibeWare draws no circles).
+export component Dot inherits Rectangle {
+    in property <int> state;
+    width: 8px;
+    height: 8px;
+    accessible-role: none;
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0.5;
+        viewbox-y: 0.5;
+        viewbox-width: 7;
+        viewbox-height: 7;
+        commands: "M 2.5 0.5 L 5.5 0.5 L 7.5 2.5 L 7.5 5.5 L 5.5 7.5 L 2.5 7.5 L 0.5 5.5 L 0.5 2.5 Z";
+        fill: States.filled(root.state) ? States.color(root.state) : transparent;
+        stroke: States.color(root.state);
+        stroke-width: 1px;
+    }
+}
+
+// A small cut label: an operation (warn), a tag (quiet), the hint (quiet).
+export component Tag inherits Rectangle {
+    in property <string> text;
+    in property <bool> warn;
+    height: 16px;
+    width: t.preferred-width + 10px;
+    accessible-role: none;
+    Chamfer {
+        width: 100%;
+        height: 100%;
+        cut: 4px;
+        fill: root.warn ? Theme.warn.with-alpha(0.14) : transparent;
+        stroke: root.warn ? Theme.warn : Theme.line-strong;
+    }
+    t := Text {
+        text: root.text;
+        font-family: root.warn ? Type.mono : Type.ui;
+        font-size: Type.small;
+        color: root.warn ? Theme.warn-text : Theme.ink-3;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        accessible-role: none;
+    }
+}
+
+component Cell inherits Text {
+    font-family: Type.mono;
+    font-size: Type.small;
+    color: Theme.ink-2;
+    vertical-alignment: center;
+    overflow: elide;
+    accessible-role: none;
+}
+
+component RepoLine inherits Rectangle {
+    in property <RepoRow> r;
+    callback clicked();
+    // A double-click: Open folder (the row stays selected).
+    callback opened();
+    height: Theme.row-h;
+    accessible-role: list-item;
+    accessible-label: root.r.repo;
+    accessible-description: root.r.a11y;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.r.selected;
+    accessible-action-default => { root.clicked(); }
+
+    background: root.r.selected ? Theme.accent-soft : ta.has-hover ? Theme.surface-2 : transparent;
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+        double-clicked => { root.opened(); }
+    }
+    if root.r.selected: Rectangle {
+        x: 0;
+        width: 2px;
+        background: Theme.accent;
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: Cols.spacing;
+        VerticalLayout {
+            width: Cols.dot;
+            alignment: center;
+            Dot { state: root.r.state; }
+        }
+        // The name, then its tag; the name gives way first (it elides), the tag stays.
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: Cols.repo-min;
+            clip: true;
+            HorizontalLayout {
+                alignment: start;
+                spacing: 6px;
+                Text {
+                    text: root.r.repo;
+                    font-size: Type.small;
+                    font-weight: Type.strong;
+                    color: root.r.state == 4 ? Theme.danger-text : Theme.ink;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    min-width: 24px;
+                    horizontal-stretch: 1;
+                    accessible-role: none;
+                }
+                if root.r.tag != "": VerticalLayout {
+                    alignment: center;
+                    Tag { text: root.r.tag; }
+                }
+            }
+            TipArea {
+                tooltip: root.r.path-tip;
+                clicked => { root.clicked(); }
+                double-clicked => { root.opened(); }
+            }
+        }
+        Rectangle {
+            width: Cols.branch;
+            clip: true;
+            HorizontalLayout {
+                spacing: 6px;
+                if root.r.op != "": VerticalLayout {
+                    alignment: center;
+                    Tag { text: root.r.op; warn: true; }
+                }
+                Cell { text: root.r.branch; color: Theme.ink; horizontal-stretch: 1; min-width: 0px; }
+            }
+        }
+        if root.r.error != "": Text {
+            text: root.r.error;
+            font-size: Type.small;
+            color: Theme.danger-text;
+            vertical-alignment: center;
+            overflow: elide;
+            width: Cols.changes + Cols.sync + Cols.stash + Cols.remote + 2 * Cols.time + 5 * Cols.spacing;
+            accessible-role: none;
+        }
+        if root.r.error == "": Cell {
+            width: Cols.changes;
+            text: root.r.fetch != "" && root.r.state == 0 ? root.r.fetch : root.r.changes;
+            font-family: Type.ui;
+            color: root.r.fetch != "" && root.r.state == 0 ? Theme.ink-3 : root.r.conflicts ? Theme.danger-text : root.r.changes == "clean" ? Theme.ink-3 : Theme.ink-2;
+        }
+        if root.r.error == "": Rectangle {
+            width: Cols.sync;
+            Cell { width: 100%; text: root.r.sync; color: root.r.sync == "upstream gone" ? Theme.warn-text : Theme.ink-2; }
+            TipArea {
+                tooltip: root.r.sync-tip;
+                clicked => { root.clicked(); }
+                double-clicked => { root.opened(); }
+            }
+        }
+        if root.r.error == "": Cell { width: Cols.stash; text: root.r.stash; horizontal-alignment: center; }
+        if root.r.error == "": Rectangle {
+            width: Cols.remote;
+            clip: true;
+            HorizontalLayout {
+                spacing: 6px;
+                Cell { text: root.r.remote; color: root.r.remote == "no remote" ? Theme.ink-3 : Theme.ink-2; horizontal-stretch: 1; min-width: 0px; }
+            }
+            TipArea {
+                tooltip: root.r.hint;
+                clicked => { root.clicked(); }
+                double-clicked => { root.opened(); }
+            }
+        }
+        if root.r.error == "": Rectangle {
+            width: Cols.time;
+            Cell { width: 100%; text: root.r.last; horizontal-alignment: right; color: Theme.ink-3; }
+            TipArea {
+                tooltip: root.r.last-tip;
+                clicked => { root.clicked(); }
+                double-clicked => { root.opened(); }
+            }
+        }
+        if root.r.error == "": Cell { width: Cols.time; text: root.r.fetched; horizontal-alignment: right; color: Theme.ink-3; }
+    }
+}
+
+// A column head that sorts: Enter or Space on it, or a click. The active one carries a chevron.
+component SortHead inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    in property <bool> down;
+    in property <bool> right;
+    in property <bool> inert;
+    callback clicked();
+    accessible-role: button;
+    accessible-label: "Sort by " + root.text;
+    accessible-checked: root.active;
+    accessible-action-default => { root.clicked(); }
+    forward-focus: fs;
+    border-width: fs.has-focus ? 1px : 0;
+    border-color: Theme.focus;
+    fs := FocusScope {
+        focus-on-tab-navigation: !root.inert;
+        focus-on-click: false;
+        key-pressed(e) => {
+            if (!root.inert && (e.text == Key.Return || e.text == " ")) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+    HorizontalLayout {
+        alignment: root.right ? end : start;
+        spacing: 2px;
+        Text {
+            text: root.text;
+            font-family: Type.mono;
+            font-size: Type.small;
+            color: sta.has-hover || root.active ? Theme.ink-2 : Theme.ink-3;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+        if root.active: VerticalLayout {
+            alignment: center;
+            Icon {
+                path: root.down ? Icons.chevron-down : Icons.chevron-up;
+                tint: Theme.ink-3;
+            }
+        }
+    }
+    sta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component Head inherits Text {
+    font-family: Type.mono;
+    font-size: Type.small;
+    color: Theme.ink-3;
+    vertical-alignment: center;
+    overflow: elide;
+    accessible-role: none;
+}
+
+component EmptyButton inherits Button {
+    kind: ButtonKind.primary;
+    icon: Icons.folder-plus;
+}
+
+export component RepoTable inherits Rectangle {
+    in property <[RepoRow]> rows;
+    // The REMOTE head's tip: what the column shows.
+    in property <string> remote-tip;
+    // Shown in an empty table, with a button when there is something to do ("Add folder…").
+    in property <string> empty-text;
+    in property <string> empty-action;
+    in property <int> sort-key;
+    in property <int> scroll-to: -1;
+    // Bumped when `scroll-to` should be brought into view.
+    in property <int> scroll-seq;
+    in property <bool> inert;
+    callback row-clicked(int);
+    callback row-opened(int);
+    callback sort(int);
+    callback empty-clicked();
+    callback key(string, bool, bool) -> bool;
+
+    public function focus-list() {
+        fs.focus();
+    }
+
+    // Deferred: the list lays the rows out first; twice, as one pass was measured not enough
+    // for End (VIBEWARE.md).
+    changed scroll-seq => {
+        later.passes = 2;
+        later.running = true;
+    }
+    later := Timer {
+        property <int> passes;
+        interval: 1ms;
+        running: false;
+        triggered => {
+            self.passes -= 1;
+            if (self.passes <= 0) {
+                self.running = false;
+            }
+            if (root.scroll-to >= 0) {
+                let top = root.scroll-to * Theme.row-h;
+                if (top < -list.content-y) {
+                    list.content-y = -top;
+                } else if (top + Theme.row-h > -list.content-y + list.visible-height) {
+                    list.content-y = -(top + Theme.row-h - list.visible-height);
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        Rectangle {
+            height: 24px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: Cols.spacing;
+                Rectangle { width: Cols.dot; }
+                SortHead { horizontal-stretch: 1; min-width: Cols.repo-min; text: "REPO"; inert: root.inert; active: root.sort-key == 0; clicked => { root.sort(0); } }
+                Head { width: Cols.branch; text: "BRANCH"; }
+                Head { width: Cols.changes; text: "CHANGES"; }
+                Head { width: Cols.sync; text: "SYNC"; }
+                Head { width: Cols.stash; text: "STASH"; horizontal-alignment: center; }
+                Rectangle {
+                    width: Cols.remote;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "REMOTE";
+                    accessible-description: root.remote-tip;
+                    Head { width: 100%; height: 100%; text: "REMOTE"; }
+                    TipArea { tooltip: root.remote-tip; }
+                }
+                SortHead { width: Cols.time; text: "COMMIT"; right: true; down: true; inert: root.inert; active: root.sort-key == 1; clicked => { root.sort(1); } }
+                SortHead { width: Cols.time; text: "FETCHED"; right: true; down: true; inert: root.inert; active: root.sort-key == 2; clicked => { root.sort(2); } }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.line;
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            fs := FocusScope {
+                accessible-role: AccessibleRole.list;
+                accessible-label: "Repos";
+                focus-on-tab-navigation: !root.inert;
+                key-pressed(e) => {
+                    if (root.key(e.text, e.modifiers.control, e.modifiers.shift)) {
+                        return accept;
+                    }
+                    reject
+                }
+                list := ListView {
+                    for r in root.rows: RepoLine {
+                        r: r;
+                        clicked => {
+                            fs.focus();
+                            root.row-clicked(r.id);
+                        }
+                        opened => {
+                            fs.focus();
+                            root.row-opened(r.id);
+                        }
+                    }
+                }
+            }
+            if root.rows.length == 0 && root.empty-text != "": VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                padding-left: 24px;
+                padding-right: 24px;
+                Text {
+                    text: root.empty-text;
+                    horizontal-alignment: center;
+                    font-size: Type.small;
+                    color: Theme.ink-3;
+                    wrap: word-wrap;
+                    min-height: self.preferred-height;
+                }
+                if root.empty-action != "": HorizontalLayout {
+                    alignment: center;
+                    EmptyButton {
+                        text: root.empty-action;
+                        inert: root.inert;
+                        clicked => { root.empty-clicked(); }
+                    }
+                }
+            }
+        }
+    }
+}

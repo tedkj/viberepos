@@ -1,0 +1,369 @@
+// VibeRepos's main window. Layout and drawing only; every decision is made in Rust.
+
+import { Theme, Type, Icons, Icon, Button, ButtonKind, TipLayer, TipArea, Toast, ToastKind, Chamfer } from "@vibeware";
+import { AboutDialog, CheckRow } from "brand.slint";
+import { TopBar, FilterBar } from "topbar.slint";
+import { RepoTable } from "repos.slint";
+import { DetailPanel } from "detail.slint";
+import { RootsDialog } from "dialogs.slint";
+import { RepoRow, ChipItem, DetailLine, RootItem } from "types.slint";
+
+export { RepoRow, ChipItem, DetailLine, RootItem }
+
+export struct ToastItem {
+    id: int,
+    text: string,
+    kind: ToastKind,
+    action: string,
+}
+
+// Git not found, or too old: what the window says, and the two ways out.
+component Banner inherits Rectangle {
+    in property <string> text;
+    in property <bool> inert;
+    callback get-git();
+    callback choose-git();
+    height: lay.preferred-height;
+    background: Theme.bg;
+    accessible-role: groupbox;
+    accessible-label: "Git";
+    lay := HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 10px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Icon { path: Icons.alert; tint: Theme.warn; }
+        }
+        Text {
+            text: root.text;
+            font-size: Type.small;
+            color: Theme.ink;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            min-width: 0px;
+            min-height: self.preferred-height;
+            horizontal-stretch: 1;
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: "Get Git";
+                icon: Icons.external;
+                kind: ButtonKind.primary;
+                tooltip: "Opens https://git-scm.com/download/win";
+                inert: root.inert;
+                clicked => { root.get-git(); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: "Choose git.exe…";
+                icon: Icons.file;
+                tooltip: "Use a git.exe of your choice (kept, and checked at every start)";
+                inert: root.inert;
+                clicked => { root.choose-git(); }
+            }
+        }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "VibeRepos";
+    icon: @image-url("../assets/app-128.png");
+    preferred-width: 1440px;
+    preferred-height: 820px;
+    min-width: 980px;
+    min-height: 560px;
+    // The table's colour: it covers most of the window (one fill per frame, VIBEWARE.md). The
+    // bars and the panel draw their own.
+    background: Theme.surface;
+    default-font-family: Type.ui;
+    default-font-size: Type.small;
+    default-font-weight: Type.regular;
+
+    in property <string> version;
+    in property <string> status-left;
+    in property <bool> status-warn;
+    in property <string> status-right;
+    in property <string> status-tip;
+    in property <[ToastItem]> toasts;
+    in-out property <bool> about-open;
+    in-out property <bool> roots-open;
+
+    // ---- the bars ----
+    in property <bool> scanning;
+    in property <bool> fetching;
+    in property <bool> stopping;
+    in property <bool> can-fetch;
+    in property <bool> portable;
+    in property <string> portable-tip;
+    in property <[ChipItem]> chips;
+    in-out property <string> name-text;
+    in property <string> banner;
+
+    // ---- the table and the panel ----
+    in property <[RepoRow]> rows;
+    in property <string> table-note;
+    in property <string> table-action;
+    in property <int> sort-key;
+    in property <int> scroll-to: -1;
+    in property <int> scroll-seq;
+    in property <bool> detail-shown;
+    in property <string> detail-title;
+    in property <string> detail-tag;
+    in property <[DetailLine]> detail-lines;
+    in property <bool> detail-can-fetch;
+    in property <string> detail-fetch-tip;
+    in property <string> detail-command;
+
+    // The REMOTE column's tip.
+    in property <string> hint-line;
+
+    // ---- the dialogs ----
+    in property <[RootItem]> roots;
+
+    property <bool> dialog-open: root.about-open || root.roots-open;
+    // Wide enough: the panel beside the table; else under it.
+    property <bool> side: root.width >= 1320px;
+
+    // About's version line and its install check (the controller's words and states).
+    in property <string> about-line;
+    in property <[CheckRow]> check-rows;
+    in property <bool> checking;
+    in property <bool> checked;
+
+    callback toggle-theme();
+    // About: "Check this install" pressed (the controller runs it on a worker, once at a time),
+    // and the website link.
+    callback check-install();
+    callback open-site();
+    callback toast-action(int);
+    callback toast-dismissed(int);
+    // A dialog closed: toasts behind it get their full time again (a toast in sight but out of
+    // reach must not expire).
+    callback dialogs-closed();
+    callback copy-text(string) -> bool;
+    callback refresh();
+    callback fetch-all();
+    callback stop-fetch();
+    callback open-roots();
+    callback copy-all() -> bool;
+    callback save-csv();
+    callback chip-picked(int);
+    callback name-edited(string);
+    callback name-escaped() -> bool;
+    callback get-git();
+    callback choose-git();
+    callback row-clicked(int);
+    // A double-click on a row: Open folder; the row ends selected.
+    callback row-opened(int);
+    callback sort(int);
+    callback empty-clicked();
+    callback open-folder();
+    callback open-terminal();
+    callback copy-path() -> bool;
+    callback fetch-one();
+    callback copy-command() -> bool;
+    callback roots-add();
+    callback roots-remove(int);
+    callback roots-closed();
+    // A key nothing focused took: arrows, Home, End, Enter, Escape, F5, Ctrl+C, Ctrl+F. True
+    // when Rust used it.
+    callback key(string, bool, bool) -> bool;
+
+    public function focus-table() {
+        table.focus-list();
+    }
+
+    public function focus-name() {
+        filters.focus-name();
+    }
+
+    changed dialog-open => {
+        if (!self.dialog-open) {
+            root.dialogs-closed();
+            table.focus-list();
+        }
+    }
+
+    // Keys that come up from wherever the focus is (buttons, the table).
+    keys := FocusScope {
+        focus-on-click: false;
+        // The window's key catcher is no Tab stop: a Tab past a dialog's last button must not land
+        // here, where Escape would not reach the dialog (About v2 has three stops; 2026-11-04).
+        focus-on-tab-navigation: false;
+        key-pressed(e) => {
+            if (!root.dialog-open && root.key(e.text, e.modifiers.control, e.modifiers.shift)) {
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            TopBar {
+                scanning: root.scanning;
+                fetching: root.fetching;
+                stopping: root.stopping;
+                can-fetch: root.can-fetch;
+                portable: root.portable;
+                portable-tip: root.portable-tip;
+                has-rows: root.rows.length > 0;
+                inert: root.dialog-open;
+                refresh => { root.refresh(); }
+                fetch-all => { root.fetch-all(); }
+                stop-fetch => { root.stop-fetch(); }
+                roots => { root.open-roots(); }
+                copy-all => { root.copy-all() }
+                save-csv => { root.save-csv(); }
+                toggle-theme => { root.toggle-theme(); }
+                about => { root.about-open = true; }
+            }
+            filters := FilterBar {
+                chips: root.chips;
+                name-text <=> root.name-text;
+                inert: root.dialog-open;
+                chip-picked(i) => { root.chip-picked(i); }
+                name-edited(t) => { root.name-edited(t); }
+                name-escaped => { root.name-escaped() }
+            }
+            if root.banner != "": Banner {
+                text: root.banner;
+                inert: root.dialog-open;
+                get-git => { root.get-git(); }
+                choose-git => { root.choose-git(); }
+            }
+
+            // ---- the table, and the panel beside it or under it ----
+            work := Rectangle {
+                vertical-stretch: 1;
+                property <length> panel-w: 380px;
+                property <length> panel-h: 230px;
+                table := RepoTable {
+                    x: 0;
+                    y: 0;
+                    width: root.detail-shown && root.side ? parent.width - work.panel-w : parent.width;
+                    height: root.detail-shown && !root.side ? parent.height - work.panel-h : parent.height;
+                    rows: root.rows;
+                    remote-tip: root.hint-line;
+                    empty-text: root.table-note;
+                    empty-action: root.table-action;
+                    sort-key: root.sort-key;
+                    scroll-to: root.scroll-to;
+                    scroll-seq: root.scroll-seq;
+                    inert: root.dialog-open;
+                    row-clicked(id) => { root.row-clicked(id); }
+                    row-opened(id) => { root.row-opened(id); }
+                    sort(k) => { root.sort(k); }
+                    empty-clicked => { root.empty-clicked(); }
+                    key(t, c, s) => { root.key(t, c, s) }
+                }
+                if root.detail-shown: DetailPanel {
+                    x: root.side ? parent.width - work.panel-w : 0;
+                    y: root.side ? 0 : parent.height - work.panel-h;
+                    width: root.side ? work.panel-w : parent.width;
+                    height: root.side ? parent.height : work.panel-h;
+                    side: root.side;
+                    title: root.detail-title;
+                    tag: root.detail-tag;
+                    lines: root.detail-lines;
+                    can-fetch: root.detail-can-fetch;
+                    fetch-tip: root.detail-fetch-tip;
+                    command: root.detail-command;
+                    inert: root.dialog-open;
+                    open-folder => { root.open-folder(); }
+                    open-terminal => { root.open-terminal(); }
+                    copy-path => { root.copy-path() }
+                    fetch => { root.fetch-one(); }
+                    copy-command => { root.copy-command() }
+                }
+            }
+
+            // ---- the status line ----
+            Rectangle {
+                height: 26px;
+                background: Theme.bg;
+                Rectangle { y: 0; height: 1px; background: Theme.line; }
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 12px;
+                    Text {
+                        text: root.status-left;
+                        font-family: Type.mono;
+                        color: root.status-warn ? Theme.warn-text : Theme.ink-3;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        min-width: 0px;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: sr.preferred-width;
+                        sr := Text {
+                            text: root.status-right;
+                            font-family: Type.mono;
+                            color: Theme.ink-3;
+                            vertical-alignment: center;
+                            height: 100%;
+                        }
+                        TipArea { tooltip: root.status-tip; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Toasts, bottom right, newest at the bottom, above the status line (and above the panel when
+    // it sits under the table). In sight behind a dialog (under its scrim), out of the Tab order.
+    VerticalLayout {
+        x: root.width - self.width - (root.detail-shown && root.side ? 394px : 14px);
+        y: root.height - self.height - (root.detail-shown && !root.side ? 270px : 40px);
+        width: 380px;
+        height: self.preferred-height;
+        spacing: 8px;
+        for t in root.toasts: Toast {
+            text: t.text;
+            kind: t.kind;
+            action: t.action;
+            inert: root.dialog-open;
+            action-clicked => { root.toast-action(t.id); }
+            dismissed => { root.toast-dismissed(t.id); }
+            copy => { root.copy-text(t.text) }
+        }
+    }
+
+    if root.roots-open: RootsDialog {
+        width: root.width;
+        height: root.height;
+        roots: root.roots;
+        top: !root.about-open;
+        add => { root.roots-add(); }
+        remove(i) => { root.roots-remove(i); }
+        closed => { root.roots-closed(); }
+    }
+
+    if root.about-open: AboutDialog {
+        width: root.width;
+        height: root.height;
+        line: root.about-line;
+        rows: root.check-rows;
+        checking: root.checking;
+        checked: root.checked;
+        check => { root.check-install(); }
+        open-site => { root.open-site(); }
+        closed => { root.about-open = false; }
+    }
+
+    TipLayer {
+        width: root.width;
+        height: root.height;
+    }
+}
