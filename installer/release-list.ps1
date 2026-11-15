@@ -23,6 +23,8 @@ if ($List -eq "") { $List = "$PSScriptRoot\releases\viberepos.json" }
 if ($Version -eq "") {
     $Version = (Select-String -Path "$root\Cargo.toml" -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
 }
+# x.y.z with an optional -pre part (0.1.0-preview), as the app reads it (check::version, `Ver`
+# below); a published preview gets its entry too (X15SIG-6).
 if ($Version.Length -gt 32 -or $Version -cnotmatch '^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(?:-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)?\z') { throw "not a release version: $Version" }
 
 # Versions ordered as the app orders them (check::compare, review RAB-6): the three numbers
