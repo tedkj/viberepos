@@ -7,7 +7,7 @@ Point it at the folders that hold your projects (it suggests the usual ones on f
 it finds every repo in them, worktrees, submodules and bare repos included. One row per repo: the
 branch, changes not committed, commits not pushed or not pulled, stashes, a merge or rebase left
 half done, a branch whose upstream is gone, no remote at all, and how old that knowledge is. Filter
-the list, open a repo in Explorer or a terminal, or copy the list as CSV.
+the list, open a repo in Explorer or a terminal, copy the list as a plain-text table, or save it as CSV.
 
 It is strictly read-only. The one thing that touches your repos is **Fetch all**, when you press
 it, and that only updates the remote branches, the same as `git fetch`. It never commits, pushes,
